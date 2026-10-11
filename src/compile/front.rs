@@ -335,11 +335,27 @@ async fn bindgen(proj: Arc<Project>, all_wasm_files: Vec<Utf8PathBuf>) -> Result
                     .clone()
                     .without_last()
                     .join(format!("{}.js", proj.lib.output_name));
-                let js = fs::read_to_string(&js_file_name).await?;
+                let split_js_file_name =
+                    js_file_name.with_file_name("__wasm_split.______________________.js");
+
+                let split_fut = (proj.split && split_js_file_name.exists())
+                    .then(|| fs::read_to_string(&split_js_file_name));
+
+                let (js, js_split) = tokio::join!(
+                    fs::read_to_string(&js_file_name),
+                    futures::future::OptionFuture::from(split_fut)
+                );
+
                 proj.site
-                    .updated_with(&proj.lib.js_file, minify(&js)?.as_bytes())
+                    .updated_with(&proj.lib.js_file, minify(&js?)?.as_bytes())
                     .await
                     .dot()?;
+
+                if let Some(content) = js_split {
+                    fs::write(&split_js_file_name, minify(&content?)?.as_bytes())
+                        .await
+                        .dot()?;
+                }
 
                 let js_minify_end_time = tokio::time::Instant::now();
                 debug!(
